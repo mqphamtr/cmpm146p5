@@ -68,12 +68,19 @@ class Individual_Grid(object):
         # STUDENT also consider weighting the different tile types so it's not uniformly random
         # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
 
-        left = 1
-        right = width - 1
-        for y in range(height):
-            for x in range(left, right):
-                pass
+        mutation_rate = 0.01  # 1% chance per tile
+        for y in range(height - 2):  # skip bottom 2 rows (ground + flag)
+            for x in range(1, width - 1):  # skip borders
+                if random.random() < mutation_rate:
+                    genome[y][x] = random.choice(options)
         return genome
+
+        # left = 1
+        # right = width - 1
+        # for y in range(height):
+        #     for x in range(left, right):
+        #         pass
+        # return genome
 
     # Create zero or more children from self and other
     def generate_children(self, other):
@@ -82,13 +89,16 @@ class Individual_Grid(object):
         # do crossover with other
         left = 1
         right = width - 1
-        for y in range(height):
+        for y in range(height):         # height - 2? avoid flag and floor?
             for x in range(left, right):
                 # STUDENT Which one should you take?  Self, or other?  Why?
                 # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-                pass
+                if random.random() < 0.5:
+                    new_genome[y][x] = other.genome[y][x]
+        new_genome = self.mutate(new_genome)
         # do mutation; note we're returning a one-element tuple here
         return (Individual_Grid(new_genome),)
+
 
     # Turn the genome into a level string (easy for this genome)
     def to_level(self):
@@ -347,6 +357,25 @@ def generate_successors(population):
     results = []
     # STUDENT Design and implement this
     # Hint: Call generate_children() on some individuals and fill up results.
+
+    # Elitism: carry over top N individuals
+    elite_count = int(len(population) * 0.1)
+    sorted_pop = sorted(population, key=lambda ind: ind.fitness(), reverse=True)
+    results.extend(sorted_pop[:elite_count])
+
+    # Tournament selection for the rest
+    def tournament(k=5):
+        competitors = random.sample(population, k)
+        return max(competitors, key=lambda ind: ind.fitness())
+
+    while len(results) < len(population):
+        parent1 = tournament()
+        parent2 = tournament()
+        children = parent1.generate_children(parent2)
+        results.extend(children)
+
+    results = results[:len(population)]
+
     return results
 
 
