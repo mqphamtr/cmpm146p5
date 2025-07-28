@@ -36,24 +36,55 @@ class Individual_Grid(object):
         self.genome = copy.deepcopy(genome)
         self._fitness = None
 
-    # Update this individual's estimate of its fitness.
-    # This can be expensive so we do it once and then cache the result.
     def calculate_fitness(self):
         measurements = metrics.metrics(self.to_level())
-        # Print out the possible measurements or look at the implementation of metrics.py for other keys:
-        # print(measurements.keys())
-        # Default fitness function: Just some arbitrary combination of a few criteria.  Is it good?  Who knows?
-        # STUDENT Modify this, and possibly add more metrics.  You can replace this with whatever code you like.
+        
+        # simple coefficients - focus on core quality
         coefficients = dict(
-            meaningfulJumpVariance=0.5,
+            meaningfulJumpVariance=0.3,
             negativeSpace=0.6,
-            pathPercentage=0.5,
-            emptyPercentage=0.6,
-            linearity=-0.5,
-            solvability=2.0
+            pathPercentage=0.3,
+            emptyPercentage=0.5,
+            linearity=-0.3,
+            solvability=2
         )
-        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m],
-                                coefficients))
+        
+        base_fitness = sum(map(lambda m: coefficients[m] * measurements[m], coefficients))
+        
+        # just a few simple adjustments
+        level = self.to_level()
+        adjustments = 0
+        
+        # penalty -> floating enemies (simple check)
+        floating_enemies = 0
+        for y in range(len(level) - 1):
+            for x in range(1, len(level[0]) - 1):
+                if level[y][x] == 'E':
+                    if level[y + 1][x] not in ['X', '?', 'B']:
+                        floating_enemies += 1
+        
+        adjustments -= floating_enemies * 0.1
+        
+        # penalty -> broken pipes (simple check)
+        broken_pipes = 0
+        for y in range(len(level)):
+            for x in range(1, len(level[0]) - 1):
+                if level[y][x] == 'T':  # pipe top
+                    if y + 1 < len(level) and level[y + 1][x] != '|':
+                        broken_pipes += 1
+        
+        adjustments -= broken_pipes * 0.15
+        
+        # bonus -> having some coins and enemies
+        coin_count = sum(row.count('o') for row in level)
+        enemy_count = sum(row.count('E') for row in level)
+        
+        if coin_count >= 3:
+            adjustments += 0.2
+        if 2 <= enemy_count <= 8:
+            adjustments += 0.2
+        
+        self._fitness = base_fitness + adjustments
         return self
 
     # Return the cached fitness value or calculate it as needed.
@@ -62,43 +93,119 @@ class Individual_Grid(object):
             self.calculate_fitness()
         return self._fitness
 
-    # Mutate a genome into a new genome.  Note that this is a _genome_, not an individual!
+    # mutate a genome into a new genome - this is where we make changes to evolve levels
     def mutate(self, genome):
-        # STUDENT implement a mutation operator, also consider not mutating this individual
-        # STUDENT also consider weighting the different tile types so it's not uniformly random
-        # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-
-        mutation_rate = 0.01  # 1% chance per tile
-        for y in range(height - 2):  # skip bottom 2 rows (ground + flag)
-            for x in range(1, width - 1):  # skip borders
-                if random.random() < mutation_rate:
-                    genome[y][x] = random.choice(options)
-        return genome
-
-        # left = 1
-        # right = width - 1
-        # for y in range(height):
-        #     for x in range(left, right):
-        #         pass
-        # return genome
+        mutated_genome = copy.deepcopy(genome)
+        
+        # reduced these rates so we don't destroy structures faster than we build them
+        tile_flip_rate = 0.02      # 2% chance per tile - was destroying platforms before
+        structure_add_rate = 0.08   # 8% chance to add new structures - increased to build more  
+        structure_remove_rate = 0.02 # 2% chance to clean up floating blocks - reduced to preserve
+        enemy_adjust_rate = 0.04    # 4% chance to fix enemy placement
+        
+        # type 1 -> individual tile mutations (but less destructive now)
+        for y in range(1, height - 2):  # skip top and bottom rows
+            for x in range(1, width - 1):  # skip first and last columns
+                if random.random() < tile_flip_rate:
+                    current_tile = mutated_genome[y][x]
+                    
+                    # if empty space, maybe add something but rarely question marks
+                    if current_tile == "-": 
+                        new_tile = random.choices(["-", "o", "X", "?", "B"], 
+                                                weights=[0.85, 0.1, 0.03, 0.01, 0.01])[0]  # way less ? blocks
+                        mutated_genome[y][x] = new_tile
+                    
+                    # if solid block, less likely to remove it (preserve platforms)
+                    elif current_tile in ["X", "?", "B"]:
+                        new_tile = random.choices(["X", "?", "B", "-"], 
+                                                weights=[0.6, 0.15, 0.15, 0.1])[0]  # only 10% chance to remove
+                        mutated_genome[y][x] = new_tile
+                    
+                    # coins can be removed sometimes
+                    elif current_tile == "o":
+                        if random.random() < 0.3:
+                            mutated_genome[y][x] = "-"
+        
+        # type 2 -> add new structures (biased toward platforms)
+        if random.random() < structure_add_rate:
+            # heavily favor platforms since we need more of them
+            structure_type = random.choices(
+                ["platform", "pipe", "coin_line", "block_cluster"],
+                weights=[0.5, 0.2, 0.1, 0.2]  # 50% chance of platform
+            )[0]
+            
+            if structure_type == "platform":
+                plat_x = random.randint(30, width - 50)  # more centered placement
+                plat_y = random.randint(8, 13)           # reasonable height
+                plat_width = random.randint(3, 8)        # bigger platforms
+                plat_material = random.choices(["X", "?", "B"], 
+                                            weights=[0.8, 0.1, 0.1])[0]  # mostly solid blocks
+                
+                # less strict about where we can place - allow some overlap
+                occupied_count = 0
+                for check_x in range(plat_x, min(plat_x + plat_width, width - 1)):
+                    if mutated_genome[plat_y][check_x] != "-":
+                        occupied_count += 1
+                
+                # place platform if less than half the area is already occupied
+                if occupied_count < plat_width // 2:
+                    for i in range(plat_width):
+                        if plat_x + i < width - 1:
+                            mutated_genome[plat_y][plat_x + i] = plat_material
+            
+            # todo: add other structure types here when needed
+        
+        # type 3 -> remove floating structures (but be gentle about it)
+        if random.random() < structure_remove_rate:
+            # only remove blocks that are completely isolated
+            for y in range(height - 3, 0, -1):  # work top to bottom, skip ground area
+                for x in range(1, width - 1):
+                    if mutated_genome[y][x] in ["X", "?", "B"]:
+                        # check 3x3 area for support instead of just directly below
+                        has_support = False
+                        for check_x in range(max(0, x-1), min(width, x+2)):
+                            if y + 1 < height and mutated_genome[y + 1][check_x] in ["X", "?", "B", "|"]:
+                                has_support = True
+                                break
+                        
+                        # only remove if really floating and random chance
+                        if not has_support and random.random() < 0.3:
+                            mutated_genome[y][x] = "-"
+        
+        # type 4 -> fix enemy placement (move floating enemies to solid ground)
+        if random.random() < enemy_adjust_rate:
+            for y in range(height - 1):
+                for x in range(1, width - 1):
+                    if mutated_genome[y][x] == "E":
+                        # check if enemy is floating
+                        if y + 1 >= height or mutated_genome[y + 1][x] not in ["X", "?", "B"]:
+                            mutated_genome[y][x] = "-"  # remove floating enemy
+                            
+                            # try to place it on solid ground nearby
+                            for try_x in range(max(1, x - 10), min(width - 1, x + 10)):
+                                ground_y = height - 2  # one tile above ground
+                                if (mutated_genome[ground_y][try_x] == "-" and 
+                                    mutated_genome[ground_y + 1][try_x] == "X"):
+                                    mutated_genome[ground_y][try_x] = "E"
+                                    break  # found a spot, stop looking
+        
+        return mutated_genome
 
     # Create zero or more children from self and other
     def generate_children(self, other):
         new_genome = copy.deepcopy(self.genome)
-        # Leaving first and last columns alone...
-        # do crossover with other
-        left = 1
-        right = width - 1
-        for y in range(height):         # height - 2? avoid flag and floor?
-            for x in range(left, right):
-                # STUDENT Which one should you take?  Self, or other?  Why?
-                # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-                if random.random() < 0.5:
-                    new_genome[y][x] = other.genome[y][x]
+        
+        # column-wise crossover: pick a crossover point
+        crossover_point = random.randint(10, width - 10)
+        
+        # take everything from crossover_point onward from other parent
+        for y in range(height):
+            for x in range(crossover_point, width - 1):  # skip last column (flag)
+                new_genome[y][x] = other.genome[y][x]
+        
         new_genome = self.mutate(new_genome)
-        # do mutation; note we're returning a one-element tuple here
         return (Individual_Grid(new_genome),)
-
+    
 
     # Turn the genome into a level string (easy for this genome)
     def to_level(self):
@@ -118,16 +225,123 @@ class Individual_Grid(object):
             g[col][-1] = "X"
         return cls(g)
 
+    
     @classmethod
     def random_individual(cls):
-        # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-        # STUDENT also consider weighting the different tile types so it's not uniformly random
-        g = [random.choices(options, k=width) for row in range(height)]
+        # start with completely empty level
+        g = [["-" for col in range(width)] for row in range(height)]
+        
+        # create mostly solid ground with some holes for variety
+        for x in range(width):
+            if random.random() < 0.9:  # 90% chance of solid ground, 10% holes
+                g[15][x] = "X"
+        
+        # create platform clusters instead of scattered random platforms
+        num_clusters = random.randint(2, 4)  # 2-4 groups of platforms
+        
+        for cluster in range(num_clusters):
+            # pick center point for this cluster
+            cluster_center = random.randint(40, width - 60)  # avoid edges
+            platforms_in_cluster = random.randint(2, 5)      # 2-5 platforms per cluster
+            
+            for _ in range(platforms_in_cluster):
+                # place platforms within 30 tiles of cluster center
+                platform_x = cluster_center + random.randint(-30, 30)
+                platform_x = max(10, min(platform_x, width - 20))  # keep in bounds
+                
+                platform_y = random.randint(8, 13)    # reasonable jumping height
+                platform_width = random.randint(3, 8)  # decent size platforms
+                platform_type = random.choices(["X", "?", "B"], weights=[0.8, 0.1, 0.1])[0]  # mostly solid
+                
+                # actually place the platform tiles
+                for x in range(platform_x, min(platform_x + platform_width, width - 1)):
+                    g[platform_y][x] = platform_type
+        
+        # add some pipes for vertical variety
+        num_pipes = random.randint(1, 3)
+        
+        for _ in range(num_pipes):
+            pipe_x = random.randint(20, width - 40)  # give space around pipes
+            pipe_height = random.randint(2, 6)       # reasonable pipe heights
+            
+            # make sure pipe has solid base
+            g[15][pipe_x] = "X"
+            g[15][pipe_x + 1] = "X"
+            
+            # build the pipe body from bottom up
+            for y in range(15 - pipe_height, 15):
+                g[y][pipe_x] = "|"
+            
+            # add pipe top
+            g[15 - pipe_height - 1][pipe_x] = "T"
+        
+        # add coins but only where mario can actually reach them
+        for _ in range(random.randint(1, 6)):  # reduced from 3-12 to avoid coin spam
+            coin_x = random.randint(1, width - 2)
+            coin_y = random.randint(5, 14)
+            
+            # check if coin is reachable (platform within jumping distance below)
+            can_reach = False
+            for check_y in range(coin_y + 1, min(coin_y + 5, height)):
+                if g[check_y][coin_x] in ["X", "?", "B", "T"]:
+                    can_reach = True
+                    break
+            
+            # only place coin if mario can get it
+            if can_reach and g[coin_y][coin_x] == "-":
+                g[coin_y][coin_x] = "o"
+        
+        # place enemies on solid ground only
+        for _ in range(random.randint(2, 6)):
+            enemy_x = random.randint(1, width - 2)
+            
+            # find solid surface from bottom up
+            for y in range(14, -1, -1):  # work from bottom up
+                if g[y + 1][enemy_x] in ["X", "?", "B"] and g[y][enemy_x] == "-":
+                    g[y][enemy_x] = "E"
+                    break  # only place one enemy per x position
+        
+        # add all the required mario level elements
+        g[15][:] = ["X"] * width        # ensure solid bottom row
+        g[14][0] = "m"                  # mario start position
+        g[7][-1] = "v"                  # goal flagpole
+        # goal flag
+        for col in range(8, 14):
+            g[col][-1] = "f"
+        # solid ground at end
+        for col in range(14, 16):                   
+            g[col][-1] = "X"
+        
+        return cls(g)
+
+    @classmethod
+    def empty_individual(cls):
+        #here we create the minimum playable level, so we know that it actually is runnable
+        g = [["-" for col in range(width)] for row in range(height)]
+        
+        #flat level with solid ground
         g[15][:] = ["X"] * width
+        
+        #basic platforms for variety
+        for x in range(50, 58):
+            g[13][x] = "X"
+        for x in range(100, 106):
+            g[11][x] = "X"
+        for x in range(150, 155):
+            g[9][x] = "X"
+        
+        # coins and enemies
+        g[12][52] = "o" 
+        g[10][102] = "o" 
+        g[14][30] = "E"  
+        g[12][103] = "E"  
         g[14][0] = "m"
         g[7][-1] = "v"
-        g[8:14][-1] = ["f"] * 6
-        g[14:16][-1] = ["X", "X"]
+        for col in range(8, 14):
+            g[col][-1] = "f"
+        for col in range(14, 16):
+            g[col][-1] = "X"
+        
         return cls(g)
 
 
@@ -186,6 +400,7 @@ class Individual_DE(object):
 
     def fitness(self):
         if self._fitness is None:
+            print(metrics.metrics(self.to_level()))
             self.calculate_fitness()
         return self._fitness
 
@@ -359,7 +574,7 @@ def generate_successors(population):
     # Hint: Call generate_children() on some individuals and fill up results.
 
     # Elitism: carry over top N individuals
-    elite_count = int(len(population) * 0.1)
+    elite_count = int(len(population) * 0.2)
     sorted_pop = sorted(population, key=lambda ind: ind.fitness(), reverse=True)
     results.extend(sorted_pop[:elite_count])
 
@@ -377,6 +592,14 @@ def generate_successors(population):
     results = results[:len(population)]
 
     return results
+
+def add_padding_columns(level, num_cols=3):
+    height = len(level)
+    for row in range(height):
+        if row == height - 1:
+            level[row].extend(["X"] * num_cols)  # solid ground
+        else:
+            level[row].extend(["-"] * num_cols)  # empty air
 
 
 def ga():
@@ -414,8 +637,11 @@ def ga():
                     print("Average generation time:", (now - start) / generation)
                     print("Net time:", now - start)
                     with open("levels/last.txt", 'w') as f:
-                        for row in best.to_level():
+                        level = best.to_level()
+                        add_padding_columns(level, 3)
+                        for row in level:
                             f.write("".join(row) + "\n")
+
                 generation += 1
                 # STUDENT Determine stopping condition
                 stop_condition = False
@@ -446,5 +672,7 @@ if __name__ == "__main__":
     # STUDENT You can change this if you want to blast out the whole generation, or ten random samples, or...
     for k in range(0, 10):
         with open("levels/" + now + "_" + str(k) + ".txt", 'w') as f:
-            for row in final_gen[k].to_level():
+            level = final_gen[k].to_level()
+            add_padding_columns(level, 3)
+            for row in level:
                 f.write("".join(row) + "\n")
