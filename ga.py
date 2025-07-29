@@ -244,7 +244,7 @@ class Individual_Grid(object):
                 g[15][x] = "X"
         
         # create platform clusters instead of scattered random platforms
-        num_clusters = random.randint(2, 10)  # 2-4 groups of platforms
+        num_clusters = random.randint(2, 30)  # 2-4 groups of platforms
         
         for cluster in range(num_clusters):
             # pick center point for this cluster
@@ -365,7 +365,7 @@ class Individual_Grid(object):
                 g[coin_y][coin_x] = "o"
         
         # place enemies on solid ground only
-        for _ in range(random.randint(2, 40)):
+        for _ in range(random.randint(20, 100)):
             enemy_x = random.randint(1, width - 2)
             
             # find solid surface from bottom up
