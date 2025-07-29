@@ -149,9 +149,16 @@ class Individual_Grid(object):
                 
                 # place platform if less than half the area is already occupied
                 if occupied_count < plat_width // 2:
+                    # for i in range(plat_width):
+                    #     if plat_x + i < width - 1:
+                    #         mutated_genome[plat_y][plat_x + i] = plat_material
                     for i in range(plat_width):
-                        if plat_x + i < width - 1:
-                            mutated_genome[plat_y][plat_x + i] = plat_material
+                        x = plat_x + i
+                        if x < width - 1 and plat_y >= 2 and plat_y <= height - 3:
+                            if (mutated_genome[plat_y - 1][x] == "-" and mutated_genome[plat_y - 2][x] == "-" and
+                                mutated_genome[plat_y + 1][x] == "-" and mutated_genome[plat_y + 2][x] == "-"):
+                                mutated_genome[plat_y][x] = plat_material
+
             
             # todo: add other structure types here when needed
         
@@ -237,7 +244,7 @@ class Individual_Grid(object):
                 g[15][x] = "X"
         
         # create platform clusters instead of scattered random platforms
-        num_clusters = random.randint(2, 4)  # 2-4 groups of platforms
+        num_clusters = random.randint(2, 10)  # 2-4 groups of platforms
         
         for cluster in range(num_clusters):
             # pick center point for this cluster
@@ -249,31 +256,97 @@ class Individual_Grid(object):
                 platform_x = cluster_center + random.randint(-30, 30)
                 platform_x = max(10, min(platform_x, width - 20))  # keep in bounds
                 
-                platform_y = random.randint(8, 13)    # reasonable jumping height
+                #platform_y = random.randint(8, 13)    # reasonable jumping height
+                max_jump_height = 4                     # Determine the maximum Y (height) that Mario can reach from ground or nearby block
+                valid_y_positions = []
+
+                for y in range(1, height - max_jump_height):
+                    for offset in range(1, max_jump_height + 1):
+                        below_y = y + offset
+                        if below_y < height and g[below_y][platform_x] in ["X", "?", "B"]:
+                            valid_y_positions.append(y)
+                            break
+
+                if not valid_y_positions:
+                    continue  # No valid spot found; skip this platform
+
+                platform_y = random.choice(valid_y_positions)
                 platform_width = random.randint(3, 8)  # decent size platforms
-                platform_type = random.choices(["X", "?", "B"], weights=[0.8, 0.1, 0.1])[0]  # mostly solid
+                platform_type = random.choices(["X", "?", "B"], weights=[0.1, 0.1, 0.8])[0]  # mostly solid
+
+                placeable = True
+                for x in range(platform_x, min(platform_x + platform_width, width - 1)):
+                    for dy in range(-2, 3):  # Check 2 above and 2 below
+                        check_y = platform_y + dy
+                        if 0 <= check_y < height:
+                            if g[check_y][x] in ["X", "?", "B"]:
+                                if abs(dy) < 2:
+                                    placeable = False
+                                    break
+                    if not placeable:
+                        break
+
+                if placeable:
+                    for x in range(platform_x, min(platform_x + platform_width, width - 1)):
+                        g[platform_y][x] = platform_type
+
                 
                 # actually place the platform tiles
-                for x in range(platform_x, min(platform_x + platform_width, width - 1)):
-                    g[platform_y][x] = platform_type
-        
+                # for x in range(platform_x, min(platform_x + platform_width, width - 1)):
+                #     g[platform_y][x] = platform_type
+
+        # create platform clusters instead of scattered random platforms
+
         # add some pipes for vertical variety
-        num_pipes = random.randint(1, 3)
-        
+        num_pipes = random.randint(1, 20)
+
         for _ in range(num_pipes):
-            pipe_x = random.randint(20, width - 40)  # give space around pipes
-            pipe_height = random.randint(2, 6)       # reasonable pipe heights
-            
-            # make sure pipe has solid base
+            pipe_x = random.randint(20, width - 40)  # leave space for Mario
+            max_height = 4  # default: max pipe height Mario can jump
+
+            # check if platform exists above pipe location to allow taller pipes
+            for dy in range(1, 5):  # check 1 to 4 tiles above ground
+                y = 15 - dy
+                if g[y][pipe_x] in ["X", "?", "B"]:
+                    max_height = 6  # allow up to 6 if reachable from platform
+                    break
+
+            pipe_height = random.randint(2, max_height)
+
+            # ensure pipe is within bounds
+            if pipe_x + 1 >= width - 1:
+                continue
+
+            # solid base
             g[15][pipe_x] = "X"
             g[15][pipe_x + 1] = "X"
-            
-            # build the pipe body from bottom up
+
+            # pipe body
             for y in range(15 - pipe_height, 15):
                 g[y][pipe_x] = "|"
+
+            # pipe top
+            if 15 - pipe_height - 1 >= 0:
+                g[15 - pipe_height - 1][pipe_x] = "T"
+
+        
+        # add some pipes for vertical variety
+        # num_pipes = random.randint(1, 3)
+        
+        # for _ in range(num_pipes):
+        #     pipe_x = random.randint(20, width - 40)  # give space around pipes
+        #     pipe_height = random.randint(2, 6)       # reasonable pipe heights
             
-            # add pipe top
-            g[15 - pipe_height - 1][pipe_x] = "T"
+        #     # make sure pipe has solid base
+        #     g[15][pipe_x] = "X"
+        #     g[15][pipe_x + 1] = "X"
+            
+        #     # build the pipe body from bottom up
+        #     for y in range(15 - pipe_height, 15):
+        #         g[y][pipe_x] = "|"
+            
+        #     # add pipe top
+        #     g[15 - pipe_height - 1][pipe_x] = "T"
         
         # add coins but only where mario can actually reach them
         for _ in range(random.randint(1, 6)):  # reduced from 3-12 to avoid coin spam
@@ -292,7 +365,7 @@ class Individual_Grid(object):
                 g[coin_y][coin_x] = "o"
         
         # place enemies on solid ground only
-        for _ in range(random.randint(2, 6)):
+        for _ in range(random.randint(2, 40)):
             enemy_x = random.randint(1, width - 2)
             
             # find solid surface from bottom up
